@@ -278,6 +278,8 @@ rx_append(
 	// store the 12-bits of x and y, as well as 6 bits of brightness
 	// (three in X and three in Y)
 	points[rx_points++] = (bright << 24) | x << 12 | y << 0;
+	if(rx_points >= MAX_PTS)
+		rx_points = 0;
 }
 
 
@@ -968,12 +970,10 @@ loop()
 	}
 
 	// go to the center of the screen, turn the beam off
-	draw_moveto(REST_X, REST_Y);
+	brightness(0);
 
-	//brightness(0);
-
-	//goto_x(REST_X);
-	//goto_y(REST_Y);
+	goto_x(REST_X);
+	goto_y(REST_Y);
 
 	// the USB loop above will flush eventually
 	digitalWriteFast(DEBUG_PIN, 0);
