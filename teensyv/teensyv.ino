@@ -47,7 +47,7 @@
 
 // How often should a frame be drawn if we haven't receivded any serial
 // data from MAME (in ms).
-#define REFRESH_RATE 20000u
+#define REFRESH_RATE 5000u
 
 
 #if defined(CONFIG_VECTORSCOPE)
@@ -62,8 +62,8 @@
  *
  * If your vectorscope doesn't have a Z axis, undefine CONFIG_BRIGHTNESS
  */
-#define BRIGHT_SHIFT	1	// larger numbers == dimmer lines
-#define NORMAL_SHIFT	2	// no z-axis, so we must have a difference
+#define BRIGHT_SHIFT	0	// larger numbers == dimmer lines
+#define NORMAL_SHIFT	0	// no z-axis, so we must have a difference
 #define OFF_JUMP		// don't wait for beam, just go!
 #define REST_X		0	// wait off screen
 #define REST_Y		0
@@ -137,7 +137,7 @@ static unsigned do_resync;
 
 
 
-#undef LINE_BRIGHT_DOUBLE
+#define LINE_BRIGHT_DOUBLE
 
 
 
@@ -729,8 +729,8 @@ _draw_lineto(
 	}
 
 	// ensure that we end up exactly where we want
-	goto_x(x1_orig);
-	goto_y(y1_orig);
+	//goto_x(x1_orig);
+	//goto_y(y1_orig);
 }
 
 
@@ -742,7 +742,21 @@ draw_lineto(
 )
 {
 	brightness(bright);
-	_draw_lineto(x1, y1, NORMAL_SHIFT);
+
+	// bright に応じて描画速度（= bright_shift）を変化させる。
+	// bright_shift が小さいほどループ回数が増えビームが遅くなり明るく見える。
+	// bright_shift が大きいほどループ回数が減りビームが速くなり暗く見える。
+	//   bright 48..63 → shift=0 (最遅・最明)
+	//   bright 32..47 → shift=1
+	//   bright 16..31 → shift=2 (NORMAL_SHIFT 相当)
+	//   bright  1..15 → shift=3 (最速・最暗)
+	int shift;
+	if      (bright >= 48) shift = 0;
+	else if (bright >= 32) shift = 1;
+	else if (bright >= 16) shift = 2;
+	else                   shift = 3;
+
+	_draw_lineto(x1, y1, shift);
 }
 
 
