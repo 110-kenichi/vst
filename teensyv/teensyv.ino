@@ -47,7 +47,7 @@
 
 // How often should a frame be drawn if we haven't receivded any serial
 // data from MAME (in ms).
-#define REFRESH_RATE 5000u
+#define REFRESH_RATE 20000u
 
 
 #if defined(CONFIG_VECTORSCOPE)
@@ -137,7 +137,7 @@ static unsigned do_resync;
 
 
 
-#define LINE_BRIGHT_DOUBLE
+#undef LINE_BRIGHT_DOUBLE
 
 
 
@@ -659,7 +659,8 @@ static inline void
 _draw_lineto(
 	int x1,
 	int y1,
-	const int bright_shift
+	const int bright_shift,
+	const int dwell_per_step = 0
 )
 {
 	int dx;
@@ -711,12 +712,14 @@ _draw_lineto(
 			err = err - dy;
 			x0 += sx;
 			goto_x(x_off + (x0 << bright_shift));
+			for (int d = 0; d < dwell_per_step; d++) goto_x(x_off + (x0 << bright_shift));
 		}
 		if (e2 < dx)
 		{
 			err = err + dx;
 			y0 += sy;
 			goto_y(y_off + (y0 << bright_shift));
+			for (int d = 0; d < dwell_per_step; d++) goto_y(y_off + (y0 << bright_shift));
 		}
 
 #ifdef LINE_BRIGHT_DOUBLE
@@ -743,20 +746,33 @@ draw_lineto(
 {
 	brightness(bright);
 
-	// bright に応じて描画速度（= bright_shift）を変化させる。
-	// bright_shift が小さいほどループ回数が増えビームが遅くなり明るく見える。
-	// bright_shift が大きいほどループ回数が減りビームが速くなり暗く見える。
-	//   bright 48..63 → shift=0 (最遅・最明)
-	//   bright 32..47 → shift=1
-	//   bright 16..31 → shift=2 (NORMAL_SHIFT 相当)
-	//   bright  1..15 → shift=3 (最速・最暗)
-	int shift;
-	if      (bright >= 48) shift = 0;
-	else if (bright >= 32) shift = 1;
-	else if (bright >= 16) shift = 2;
-	else                   shift = 3;
+	// bright を 8段階にマップして描画速度を制御する。
+	//
+	// 段階 1〜4: bright_shift で制御（ステップ解像度を下げることで速度変化）
+	//   shift=3 → 最速（最暗）、shift=0 → 標準速（明）
+	//
+	// 段階 5〜8: bright_shift=0 固定 + dwell_per_step で制御
+	//   各ステップで DAC 書き込みを余分に繰り返し、最大 2倍まで遅くする（輝度 2倍）
+	//
+	//  bright  1.. 8 → shift=3, dwell=0  (8x速・最暗)
+	//  bright  9..16 → shift=2, dwell=0  (4x速)
+	//  bright 17..24 → shift=1, dwell=0  (2x速)
+	//  bright 25..32 → shift=0, dwell=0  (基準速)
+	//  bright 33..40 → shift=0, dwell=1  (基準速・輝度DAC増加のみ)
+	//  bright 41..48 → shift=0, dwell=2  (約1.5x遅い・輝度 1.5x)
+	//  bright 49..56 → shift=0, dwell=3  (約1.75x遅い・輝度 1.75x) ← 各ステップを3回出力
+	//  bright 57..63 → shift=0, dwell=4  (2x遅い・輝度 2x)         ← 各ステップを4回出力
+	int shift, dwell;
+	if      (bright <=  8) { shift = 3; dwell = 0; }
+	else if (bright <= 16) { shift = 2; dwell = 0; }
+	else if (bright <= 24) { shift = 1; dwell = 0; }
+	else if (bright <= 32) { shift = 0; dwell = 0; }
+	else if (bright <= 40) { shift = 0; dwell = 1; }
+	else if (bright <= 48) { shift = 0; dwell = 2; }
+	else if (bright <= 56) { shift = 0; dwell = 3; }
+	else                   { shift = 0; dwell = 4; }
 
-	_draw_lineto(x1, y1, shift);
+	_draw_lineto(x1, y1, shift, dwell);
 }
 
 
