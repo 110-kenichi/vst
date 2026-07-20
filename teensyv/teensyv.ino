@@ -125,6 +125,10 @@
 #define DELAY_PIN	7
 #define IO_PIN	5
 
+#define LED1_PIN 21
+#define LED2_PIN 22
+#define LED3_PIN 23
+
 #define MAX_PTS 3000
 static unsigned rx_points;
 static unsigned num_points;
@@ -516,12 +520,18 @@ setup()
 	pinMode(SDI, OUTPUT);
 	pinMode(SCK, OUTPUT);
 
+  pinMode(LED1_PIN, OUTPUT); // LED1_PINピンを出力モードに設定
+  digitalWrite(LED1_PIN, HIGH); // LED1_PINをHIGH（ON）にする
+  pinMode(LED2_PIN, OUTPUT); // LED2_PINピンを出力モードに設定
+  digitalWrite(LED2_PIN, HIGH); // LED2_PINをHIGH（ON）にする
+  pinMode(LED3_PIN, OUTPUT); // LED3_PINピンを出力モードに設定
+  digitalWrite(LED3_PIN, HIGH); // LED3_PINをHIGH（ON）にする
+
 	rx_points = 0;
 
 	draw_test_pattern();
 	num_points = rx_points;
 	rx_points = 0;
-	
 
 #ifdef SLOW_SPI
 	SPI.begin();
@@ -997,6 +1007,33 @@ loop()
 			draw_moveto(x,y);
 		else
 			draw_lineto(x, y, intensity);
+	}
+
+	if(num_points >= 3000)
+	{
+	  digitalWrite(LED3_PIN, LOW);
+	  digitalWrite(LED2_PIN, LOW);
+  	digitalWrite(LED1_PIN, LOW);
+	}else if(num_points > 2000)
+	{
+	  digitalWrite(LED3_PIN, HIGH);
+	  digitalWrite(LED2_PIN, HIGH);
+  	digitalWrite(LED1_PIN, HIGH);
+	}else if(num_points > 1000)
+	{
+	  digitalWrite(LED3_PIN, LOW);
+	  digitalWrite(LED2_PIN, HIGH);
+  	digitalWrite(LED1_PIN, HIGH);
+	}else if(num_points > 1)
+	{
+	  digitalWrite(LED3_PIN, LOW);
+	  digitalWrite(LED2_PIN, LOW);
+  	digitalWrite(LED1_PIN, HIGH);
+	}else
+	{
+	  digitalWrite(LED3_PIN, LOW);
+	  digitalWrite(LED2_PIN, LOW);
+  	digitalWrite(LED1_PIN, LOW);
 	}
 
 	// go to the center of the screen, turn the beam off
