@@ -945,6 +945,34 @@ read_data()
 			ready_points = rx_points;
 			frame_ready = 1;
 			rx_points = 0;
+
+			if(ready_points >= 3000)
+			{
+				digitalWrite(LED3_PIN, LOW);
+				digitalWrite(LED2_PIN, LOW);
+				digitalWrite(LED1_PIN, LOW);
+			}else if(ready_points > 2000)
+			{
+				digitalWrite(LED3_PIN, HIGH);
+				digitalWrite(LED2_PIN, HIGH);
+				digitalWrite(LED1_PIN, HIGH);
+			}else if(ready_points > 1000)
+			{
+				digitalWrite(LED3_PIN, LOW);
+				digitalWrite(LED2_PIN, HIGH);
+				digitalWrite(LED1_PIN, HIGH);
+			}else if(ready_points > 1)
+			{
+				digitalWrite(LED3_PIN, LOW);
+				digitalWrite(LED2_PIN, LOW);
+				digitalWrite(LED1_PIN, HIGH);
+			}else
+			{
+				digitalWrite(LED3_PIN, LOW);
+				digitalWrite(LED2_PIN, LOW);
+				digitalWrite(LED1_PIN, LOW);
+			}
+
 		}
 
 		//Serial.print("*** fb");
