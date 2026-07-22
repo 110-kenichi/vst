@@ -131,9 +131,17 @@
 
 #define MAX_PTS 3000
 static unsigned rx_points;
+static unsigned frame_ready;
+static unsigned rx_buffer;
+static unsigned draw_buffer;
+static unsigned ready_buffer;
+static unsigned ready_points;
 static unsigned num_points;
-static uint32_t points[MAX_PTS];
+static uint32_t points[2][MAX_PTS];
 static unsigned do_resync;
+static unsigned discard_frame;
+static unsigned drawing;
+static unsigned draw_index;
 
 #define MOVETO		(1<<11)
 #define LINETO		(2<<11)
@@ -279,11 +287,18 @@ rx_append(
 	unsigned bright
 )
 {
+	if (discard_frame || frame_ready)
+		return;
+
+	if (rx_points >= MAX_PTS)
+	{
+		discard_frame = 1;
+		return;
+	}
+
 	// store the 12-bits of x and y, as well as 6 bits of brightness
 	// (three in X and three in Y)
-	points[rx_points++] = (bright << 24) | x << 12 | y << 0;
-	if(rx_points >= MAX_PTS)
-		rx_points = 0;
+	points[rx_buffer][rx_points++] = (bright << 24) | x << 12 | y << 0;
 }
 
 
@@ -504,7 +519,7 @@ setup()
 	// set the Time library to use Teensy 3.0's RTC to keep time
 	setSyncProvider(teensy3_rtc);
 
-	Serial.begin(9600);
+	Serial.begin(56000);
 	pinMode(DELAY_PIN, OUTPUT);
 	pinMode(DEBUG_PIN, OUTPUT);
 	pinMode(IO_PIN, OUTPUT);
@@ -527,10 +542,25 @@ setup()
   pinMode(LED3_PIN, OUTPUT); // LED3_PINピンを出力モードに設定
   digitalWrite(LED3_PIN, HIGH); // LED3_PINをHIGH（ON）にする
 
+	rx_buffer = 0;
+	draw_buffer = 1;
 	rx_points = 0;
+	frame_ready = 0;
+	ready_buffer = 0;
+	ready_points = 0;
+	discard_frame = 0;
+	drawing = 0;
+	draw_index = 0;
 
 	draw_test_pattern();
+	draw_buffer = 0;
 	num_points = rx_points;
+	ready_buffer = 0;
+	ready_points = 0;
+	frame_ready = 0;
+	draw_index = 0;
+	drawing = 1;
+	rx_buffer = 1;
 	rx_points = 0;
 
 #ifdef SLOW_SPI
@@ -678,18 +708,12 @@ _draw_lineto(
 	int sx;
 	int sy;
 
-	const int x1_orig = x1;
-	const int y1_orig = y1;
-
 	int x_off = x1 & ((1 << bright_shift) - 1);
 	int y_off = y1 & ((1 << bright_shift) - 1);
 	x1 >>= bright_shift;
 	y1 >>= bright_shift;
 	int x0 = x_pos >> bright_shift;
 	int y0 = y_pos >> bright_shift;
-
-	goto_x(x_pos);
-	goto_y(y_pos);
 
 	if (x0 <= x1)
 	{
@@ -741,9 +765,6 @@ _draw_lineto(
 #endif
 	}
 
-	// ensure that we end up exactly where we want
-	//goto_x(x1_orig);
-	//goto_y(y1_orig);
 }
 
 
@@ -906,8 +927,25 @@ read_data()
 	// bright 0, switch buffers
 	if (flag == 0)
 	{
-		num_points = rx_points;
-		rx_points = 0;
+		if (discard_frame)
+		{
+			discard_frame = 0;
+			rx_points = 0;
+		}
+		else if (frame_ready)
+		{
+			// 2面しかないため、描画待ちフレームがある間の
+			// 追加フレームは次のフレーム終端まで破棄する。
+			discard_frame = 1;
+			rx_points = 0;
+		}
+		else
+		{
+			ready_buffer = rx_buffer;
+			ready_points = rx_points;
+			frame_ready = 1;
+			rx_points = 0;
+		}
 
 		//Serial.print("*** fb");
 		//Serial.print(fb);
@@ -926,77 +964,38 @@ read_data()
 void
 loop()
 {
-	//Serial.print(fb);
-	//Serial.print(' ');
-	//Serial.print(num_points);
-	//Serial.println();
-
-	static uint32_t frame_micros;
-	uint32_t now;
-
 #ifndef CONFIG_CLOCK
-	while(1)
+	// 描画中もUART受信を継続する。1回のloopで処理する量を制限する。
+	for (unsigned n = 0; n < 32 && Serial.available(); n++)
+		read_data();
+
+	if (spi_dma_tx_complete())
+		spi_dma_tx();
+
+	if (!drawing && frame_ready)
 	{
-		now = micros();
-
-		// make sure we flush the partial buffer
-		// once the last one has completed
-		if (spi_dma_tx_complete())
-		{
-			if (rx_points == 0 && now - frame_micros > REFRESH_RATE)
-				break;
-			spi_dma_tx();
-		}
-
-		// start redraw when read_data is done
-		if (Serial.available() && read_data() == 1)
-			break;
+		draw_buffer = ready_buffer;
+		num_points = ready_points;
+		rx_buffer = 1 - draw_buffer;
+		frame_ready = 0;
+		draw_index = 0;
+		drawing = 1;
 	}
 
-	frame_micros = now;
-
-	// if there are any DMAs currently in transit, wait for them
-	// to complete.
-	while (!spi_dma_tx_complete())
-		;
-
-	// now start any last buffered ones and wait for those
-	// to complete.
-	spi_dma_tx();
-	while (!spi_dma_tx_complete())
-		;
-
-#else
-	// if there are any DMAs currently in transit, wait for them
-	// to complete.
-	while (!spi_dma_tx_complete())
-		;
-
-	// now start any last buffered ones and wait for those
-	// to complete.
-	spi_dma_tx();
-	while (!spi_dma_tx_complete())
-		;
-
-	// redraw the clock image
-	scopeclock();
-#endif
-
-
-	// flag that we have started an output frame
-	digitalWriteFast(DEBUG_PIN, 1);
-
-	// force a reference voltage write on every cycle
-	spi_dma_cs = SPI_DMA_CS_BEAM_OFF;
-	mpc4921_write(1, 2048);
-	spi_dma_cs = SPI_DMA_CS_BEAM_ON;
-
-	for(unsigned n = 0 ; n < num_points ; n++)
+	if (drawing && draw_index < num_points)
 	{
-		const uint32_t pt = points[n];
+		if (draw_index == 0)
+		{
+			digitalWriteFast(DEBUG_PIN, 1);
+			spi_dma_cs = SPI_DMA_CS_BEAM_OFF;
+			mpc4921_write(1, 2048);
+			spi_dma_cs = SPI_DMA_CS_BEAM_ON;
+		}
+
+		const uint32_t pt = points[draw_buffer][draw_index++];
 		uint16_t x = (pt >> 12) & 0xFFF;
-		uint16_t y = (pt >>  0) & 0xFFF;
-		unsigned intensity = (pt  >> 24) & 0x3F;
+		uint16_t y = pt & 0xFFF;
+		unsigned intensity = (pt >> 24) & 0x3F;
 
 #ifndef FULL_SCALE
 		x = (x >> 1) + 1024;
@@ -1004,45 +1003,45 @@ loop()
 #endif
 
 		if (intensity == 0)
-			draw_moveto(x,y);
+			draw_moveto(x, y);
 		else
 			draw_lineto(x, y, intensity);
 	}
 
-	if(num_points >= 3000)
+	if (drawing && draw_index >= num_points && spi_dma_tx_complete())
 	{
-	  digitalWrite(LED3_PIN, LOW);
-	  digitalWrite(LED2_PIN, LOW);
-  	digitalWrite(LED1_PIN, LOW);
-	}else if(num_points > 2000)
-	{
-	  digitalWrite(LED3_PIN, HIGH);
-	  digitalWrite(LED2_PIN, HIGH);
-  	digitalWrite(LED1_PIN, HIGH);
-	}else if(num_points > 1000)
-	{
-	  digitalWrite(LED3_PIN, LOW);
-	  digitalWrite(LED2_PIN, HIGH);
-  	digitalWrite(LED1_PIN, HIGH);
-	}else if(num_points > 1)
-	{
-	  digitalWrite(LED3_PIN, LOW);
-	  digitalWrite(LED2_PIN, LOW);
-  	digitalWrite(LED1_PIN, HIGH);
-	}else
-	{
-	  digitalWrite(LED3_PIN, LOW);
-	  digitalWrite(LED2_PIN, LOW);
-  	digitalWrite(LED1_PIN, LOW);
+		//brightness(0);
+		//goto_x(REST_X);
+		//goto_y(REST_Y);
+		digitalWriteFast(DEBUG_PIN, 0);
+
+		// 新しいフレームがまだ届いていない場合は、最後の正常な
+		// フレームを繰り返し描画して表示を消さない。
+		if (frame_ready)
+		{
+			// 次フレームが完成済みなら、次のloopで描画バッファを
+			// 切り替える。
+			drawing = 0;
+		}
+		else if (num_points > 0)
+		{
+			draw_index = 0;
+		}
+		else
+		{
+			drawing = 0;
+		}
 	}
 
-	// go to the center of the screen, turn the beam off
-	brightness(0);
+#else
+	while (!spi_dma_tx_complete())
+		;
 
-	goto_x(REST_X);
-	goto_y(REST_Y);
+	spi_dma_tx();
+	while (!spi_dma_tx_complete())
+		;
 
-	// the USB loop above will flush eventually
-	digitalWriteFast(DEBUG_PIN, 0);
+	scopeclock();
+#endif
 }
 
