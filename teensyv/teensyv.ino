@@ -69,6 +69,7 @@
 #define REST_Y		0
 
 #undef FULL_SCALE		// only use -1.25 to 1.25V range
+#define FULL_SCALE		// use the full -2.5 to 2.5V range
 
 // most vector scopes don't have brightness control, but set it anyway
 #define CONFIG_BRIGHTNESS
@@ -77,8 +78,6 @@
 #define BRIGHT_BRIGHT	4095	// super bright
 
 #define OFF_DWELL0	10	// time to sit beam on before starting a transit
-
-#define FULL_SCALE		// use the full -2.5 to 2.5V range
 
 #elif defined(CONFIG_VECTREX)
 /** Vectrex configuration.
@@ -280,6 +279,28 @@ spi_dma_setup()
 }
 
 
+static int
+rx_decimate()
+{
+	unsigned write_index = 0;
+	unsigned line_index = 0;
+
+	for (unsigned read_index = 0; read_index < rx_points; read_index++)
+	{
+		const uint32_t point = points[rx_buffer][read_index];
+		const unsigned bright = (point >> 24) & 0x3F;
+
+		// MOVETO は描画経路を分けるため、常に保持する。
+		// 線分は交互に残し、保持した終点同士を新しい線分とする。
+		if (bright == 0 || (line_index++ & 1) == 0)
+			points[rx_buffer][write_index++] = point;
+	}
+
+	rx_points = write_index;
+	return rx_points < MAX_PTS;
+}
+
+
 void
 rx_append(
 	int x,
@@ -292,8 +313,11 @@ rx_append(
 
 	if (rx_points >= MAX_PTS)
 	{
-		discard_frame = 1;
-		return;
+		if (!rx_decimate())
+		{
+			discard_frame = 1;
+			return;
+		}
 	}
 
 	// store the 12-bits of x and y, as well as 6 bits of brightness
@@ -581,18 +605,24 @@ setup()
 static void
 mpc4921_write(
 	int channel,
-	uint16_t value
+	uint16_t value,
+	int x2gain
 )
 {
 	value &= 0x0FFF; // mask out just the 12 bits of data
 
-#if 1
+if(!x2gain)
+{
 	// select the output channel, buffered, no gain
 	value |= 0x7000 | (channel == 1 ? 0x8000 : 0x0000);
-#else
+}else{
+	// select the output channel, buffered, 2x gain
+	value |= 0x5000 | (channel == 1 ? 0x8000 : 0x0000);
+}
 	// select the output channel, unbuffered, no gain
-	value |= 0x3000 | (channel == 1 ? 0x8000 : 0x0000);
-#endif
+	//value |= 0x3000 | (channel == 1 ? 0x8000 : 0x0000);
+	// select the output channel, unbuffered, 2x gain
+	//value |= 0x1000 | (channel == 1 ? 0x8000 : 0x0000);
 
 #ifdef SLOW_SPI
 	SPI.transfer((value >> 8) & 0xFF);
@@ -632,9 +662,9 @@ goto_x(
 {
 	x_pos = x;
 #ifdef FLIP_X
-	mpc4921_write(DAC_X_CHAN, 4095 - x);
+	mpc4921_write(DAC_X_CHAN, 4095 - x, 0);
 #else
-	mpc4921_write(DAC_X_CHAN, x);
+	mpc4921_write(DAC_X_CHAN, x, 0);
 #endif
 }
 
@@ -645,9 +675,9 @@ goto_y(
 {
 	y_pos = y;
 #ifdef FLIP_Y
-	mpc4921_write(DAC_Y_CHAN, 4095 - y);
+	mpc4921_write(DAC_Y_CHAN, 4095 - y, 0);
 #else
-	mpc4921_write(DAC_Y_CHAN, y);
+	mpc4921_write(DAC_Y_CHAN, y, 0);
 #endif
 }
 
@@ -688,7 +718,13 @@ brightness(
 	if (bright > 0)
 		bright_scaled = BRIGHT_NORMAL + ((BRIGHT_BRIGHT - BRIGHT_NORMAL) * bright) / 64;
 
-	mpc4921_write(0, bright_scaled);
+	//mpc4921_write(0, bright_scaled);
+
+	if(bright == 0)
+		mpc4921_write(0, 4095, 1);
+	else
+		mpc4921_write(0, 0, 1);
+
 	spi_dma_cs = SPI_DMA_CS_BEAM_ON;
 #else
 	(void) bright;
@@ -1016,7 +1052,7 @@ loop()
 		{
 			digitalWriteFast(DEBUG_PIN, 1);
 			spi_dma_cs = SPI_DMA_CS_BEAM_OFF;
-			mpc4921_write(1, 2048);
+			mpc4921_write(1, 0, 0);
 			spi_dma_cs = SPI_DMA_CS_BEAM_ON;
 		}
 
