@@ -146,7 +146,8 @@ static unsigned draw_index;
 #define LINETO		(2<<11)
 #define BRIGHTTO	(3<<11)
 
-
+#define FLIP			(0)
+#define NORM_LINE	(1)
 
 #undef LINE_BRIGHT_DOUBLE
 
@@ -305,7 +306,8 @@ void
 rx_append(
 	int x,
 	int y,
-	unsigned bright
+	unsigned bright,
+	unsigned flag
 )
 {
 	if (discard_frame || frame_ready)
@@ -320,30 +322,30 @@ rx_append(
 		}
 	}
 
-	// store the 12-bits of x and y, as well as 6 bits of brightness
+	// store the 12-bits of x and y, as well as 6 + 2 bits of brightness & cmd
 	// (three in X and three in Y)
-	points[rx_buffer][rx_points++] = (bright << 24) | x << 12 | y << 0;
+	points[rx_buffer][rx_points++] = (flag << 30) | (bright << 24) | x << 12 | y << 0;
 }
 
 
 void
 moveto(int x, int y)
 {
-	rx_append(x, y, 0);
+	rx_append(x, y, 0, NORM_LINE);
 }
 
 
 void
 lineto(int x, int y)
 {
-	rx_append(x, y, 24); // normal brightness
+	rx_append(x, y, 24, NORM_LINE); // normal brightness
 }
 
 
 void
 brightto(int x, int y)
 {
-	rx_append(x, y, 63); // max brightness
+	rx_append(x, y, 63, NORM_LINE); // max brightness
 }
 
 
@@ -470,7 +472,7 @@ draw_test_pattern()
 	for(int i = 1 ; i < 63 ; i += 4)
 	{
 		moveto(1600, 2048 + i * 8);
-		rx_append(1900, 2048 + i * 8, i); 
+		rx_append(1900, 2048 + i * 8, i, NORM_LINE); 
 	}
 
 	// draw the sunburst pattern in the corner
@@ -480,9 +482,9 @@ draw_test_pattern()
 		if (i & 1)
 		{
 			moveto(1024,j);
-			rx_append(0,0, i * 7);
+			rx_append(0,0, i * 7, NORM_LINE);
 		} else {
-			rx_append(1024,j, i * 7);
+			rx_append(1024,j, i * 7, NORM_LINE);
 		}
 	}
 
@@ -492,9 +494,9 @@ draw_test_pattern()
 		if (i & 1)
 		{
 			moveto(j,1024);
-			rx_append(0,0, i * 7);
+			rx_append(0,0, i * 7, NORM_LINE);
 		} else {
-			rx_append(j,1024, i * 7);
+			rx_append(j,1024, i * 7, NORM_LINE);
 		}
 	}
 
@@ -711,19 +713,19 @@ brightness(
 	spi_dma_cs = SPI_DMA_CS_BEAM_OFF;
 
 	// scale bright from OFF to BRIGHT
-	if (bright > 64)
-		bright = 64;
+	if (bright > 63)
+		bright = 63;
 
-	int bright_scaled = BRIGHT_OFF;
-	if (bright > 0)
-		bright_scaled = BRIGHT_NORMAL + ((BRIGHT_BRIGHT - BRIGHT_NORMAL) * bright) / 64;
+	int bright_scaled = 4095 - (bright * 64); //BRIGHT_OFF;
+	//if (bright > 0)
+	//	bright_scaled = BRIGHT_NORMAL + ((BRIGHT_BRIGHT - BRIGHT_NORMAL) * bright) / 64;
 
-	//mpc4921_write(0, bright_scaled);
+	mpc4921_write(0, bright_scaled, 0);
 
-	if(bright == 0)
-		mpc4921_write(0, 4095, 1);
-	else
-		mpc4921_write(0, 0, 1);
+	//if(bright == 0)
+	//	mpc4921_write(0, 4095, 1);
+	//else
+	//	mpc4921_write(0, 0, 1);
 
 	spi_dma_cs = SPI_DMA_CS_BEAM_ON;
 #else
@@ -808,7 +810,7 @@ void
 draw_lineto(
 	int x1,
 	int y1,
-	unsigned bright
+	unsigned int bright
 )
 {
 	brightness(bright);
@@ -960,7 +962,7 @@ read_data()
 
 	offset = cmd = 0;
 
-	// bright 0, switch buffers
+	// cmd 0, switch buffers
 	if (flag == 0)
 	{
 		if (discard_frame)
@@ -1019,7 +1021,7 @@ read_data()
 		return 1;
 	}
 
-	rx_append(x, y, bright);
+	rx_append(x, y, bright, flag);
 
 	return 0;
 }
@@ -1060,6 +1062,7 @@ loop()
 		uint16_t x = (pt >> 12) & 0xFFF;
 		uint16_t y = pt & 0xFFF;
 		unsigned intensity = (pt >> 24) & 0x3F;
+		unsigned cmd = (pt >> 30) & 0x3;
 
 #ifndef FULL_SCALE
 		x = (x >> 1) + 1024;
