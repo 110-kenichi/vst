@@ -148,6 +148,7 @@ static unsigned draw_index;
 
 #define FLIP			(0)
 #define NORM_LINE	(1)
+#define BRIGHT_LINE	(2)
 
 #undef LINE_BRIGHT_DOUBLE
 
@@ -810,10 +811,17 @@ void
 draw_lineto(
 	int x1,
 	int y1,
-	unsigned int bright
+	unsigned int bright,
+	unsigned int cmd
 )
 {
-	brightness(bright);
+	if(cmd == BRIGHT_LINE)
+	{
+		brightness(bright);
+		bright = 16;
+	}else{
+		brightness(63);
+	}
 
 	// bright を 8段階にマップして描画速度を制御する。
 	//
@@ -1062,7 +1070,7 @@ loop()
 		uint16_t x = (pt >> 12) & 0xFFF;
 		uint16_t y = pt & 0xFFF;
 		unsigned intensity = (pt >> 24) & 0x3F;
-		unsigned cmd = (pt >> 30) & 0x3;
+		unsigned flag = (pt >> 30) & 0x3;
 
 #ifndef FULL_SCALE
 		x = (x >> 1) + 1024;
@@ -1072,7 +1080,7 @@ loop()
 		if (intensity == 0)
 			draw_moveto(x, y);
 		else
-			draw_lineto(x, y, intensity);
+			draw_lineto(x, y, intensity, flag);
 	}
 
 	if (drawing && draw_index >= num_points && spi_dma_tx_complete())
