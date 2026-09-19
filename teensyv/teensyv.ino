@@ -817,7 +817,7 @@ draw_lineto(
 {
 	if(cmd == BRIGHT_LINE)
 	{
-		brightness(bright);
+		brightness(bright * 2);
 		//bright = 32;
 	}else{
 		brightness(63);
